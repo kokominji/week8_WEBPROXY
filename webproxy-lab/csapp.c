@@ -42,7 +42,7 @@ void posix_error(int code, char *msg) /* Posix-style error */
     exit(0);
 }
 
-void gai_error(int code, char *msg) /* Getaddrinfo-style error */
+void csapp_gai_error(int code, char *msg) /* Getaddrinfo-style error */
 {
     fprintf(stderr, "%s: %s\n", msg, gai_strerror(code));
     exit(0);
@@ -605,7 +605,7 @@ void Getaddrinfo(const char *node, const char *service,
     int rc;
 
     if ((rc = getaddrinfo(node, service, hints, res)) != 0) 
-        gai_error(rc, "Getaddrinfo error");
+        csapp_gai_error(rc, "Getaddrinfo error");
 }
 /* $end getaddrinfo */
 
@@ -616,7 +616,7 @@ void Getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host,
 
     if ((rc = getnameinfo(sa, salen, host, hostlen, serv, 
                           servlen, flags)) != 0) 
-        gai_error(rc, "Getnameinfo error");
+        csapp_gai_error(rc, "Getnameinfo error");
 }
 
 void Freeaddrinfo(struct addrinfo *res)
@@ -1048,19 +1048,37 @@ int open_listenfd(char *port)
  ****************************************************/
 int Open_clientfd(char *hostname, char *port) 
 {
-    int rc;
+    int clientfd;
+    struct addrinfo hints, *listp, *p;
 
-    if ((rc = open_clientfd(hostname, port)) < 0) 
-	unix_error("Open_clientfd error");
-    return rc;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICSERV;
+    hints.ai_flags |= AI_ADDRCONFIG;
+    Getaddrinfo(hostname, port, &hints, &listp);
+
+    for (p = listp; p; p = p->ai_next) {
+        if ((clientfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
+            continue;
+
+        if (connect(clientfd, p->ai_addr, p->ai_addrlen) != -1)
+            break;
+
+        Close(clientfd);
+    }
+
+    Freeaddrinfo(listp);
+    if (!p)
+        return -1;
+    else
+        return clientfd;
 }
 
-int Open_listenfd(char *port) 
-{
+int Open_listenfd(char *port) {
     int rc;
 
     if ((rc = open_listenfd(port)) < 0)
-	unix_error("Open_listenfd error");
+        unix_error("Open_listenfd error");
     return rc;
 }
 
