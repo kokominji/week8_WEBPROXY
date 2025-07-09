@@ -17,7 +17,7 @@ void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
 
-//서버 실행 -> 무한 루프 -> 요청 수락
+//1. tiny main - 서버 실행 -> 무한 루프 -> 요청 수락
 int main(int argc, char **argv)
 {
   int listenfd, connfd;
@@ -58,7 +58,7 @@ int main(int argc, char **argv)
   }
 }
 
-//클라이언트의 HTTP 요청 하나를 처리
+//2. doit - 클라이언트의 HTTP 요청 하나를 처리
 void doit(int fd)
 {
   int is_static; //정적 컨텐츠(1) 동적 컨텐츠(0)인지
@@ -113,7 +113,7 @@ void doit(int fd)
   }
 }
 
-//서버에서 클라이언트로 에러 응답보내기
+//3. clienterror - 서버에서 클라이언트로 에러 응답보내기
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg)
 {
   char buf[MAXLINE], body[MAXBUF];
@@ -133,7 +133,7 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
   Rio_writen(fd,body,strlen(body));
 }
 
-//HTTP 헤더 읽기
+//4. read_requesthdrs - HTTP 헤더 읽기.읽기만 하고 버림
 void read_requesthdrs(rio_t *rp)
 {
     char buf[MAXLINE]; //한 줄씩 읽은 헤더 내용을 임시 저장
@@ -148,7 +148,7 @@ void read_requesthdrs(rio_t *rp)
     return;
 }
 
-//클라이언트가 요청한 URL분석해서 정적/동적 구분
+//5. parse_uri - 클라이언트가 요청한 URL분석해서 정적/동적 구분
 int parse_uri(char *uri, char *filename, char *cgiargs)
 {
     char *ptr;
@@ -163,7 +163,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
     } else {
 
         //동적 컨텐츠 처리
-        ptr = index(uri, '?');
+        ptr = index(uri, '?'); 
         if (ptr) {
             strcpy(cgiargs, ptr + 1);
             *ptr = '\0'; //?를 NULL문자로 바꿔서 파일 경로만 남김
@@ -176,32 +176,62 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
     }
 }
 
-//정적 파일을 클라이언트에 보내줌. MIME 타입 결정
-void serve_static(int fd, char *filename, int filesize)
-{
+// //6. serve_static - 정적 파일을 클라이언트에 보내줌. MIME 타입 결정
+// void serve_static(int fd, char *filename, int filesize)
+// {
+//     int srcfd; //디스크에서 파일읽을 때 파일 디스크립터
+//     char *srcp, filetype[MAXLINE], buf[MAXBUF];
+
+//     get_filetype(filename, filetype); //MIME 타입 결정
+//     sprintf(buf, "HTTP/1.0 200 OK\r\n");
+//     sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
+//     sprintf(buf, "%sConnection: close\r\n", buf);
+//     sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+//     sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
+
+//     Rio_writen(fd, buf, strlen(buf)); //응답 헤더 클라이언트에 전송
+//     printf("Response headers:\n");
+//     printf("%s", buf);
+
+//     srcfd = Open(filename, O_RDONLY, 0);
+//     srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+//     Close(srcfd);
+//     Rio_writen(fd, srcp, filesize); //매핑된 내용을 소켓으로 보냄
+//     Munmap(srcp, filesize);
+// }
+
+// //숙제 문제 11.9 : malloc,rio_readn,rio_writen 사용
+void serve_static(int fd, char *filename, int filesize) {
     int srcfd;
-    char *srcp, filetype[MAXLINE], buf[MAXBUF];
+    char *filebuf; //파일 내용을 담을 메모리 버퍼
+    ssize_t bytes_read; 
+    char filetype[MAXLINE], buf[MAXBUF];
 
-    get_filetype(filename, filetype); //MIME 타입 결정
+    // MIME 타입 결정
+    get_filetype(filename, filetype);
 
-    sprintf(buf, "HTTP/1.0 200 OK\r\n");
-    sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
+    //HTTP 응답 헤더 만들기
+    sprintf(buf, "HTTP/1.0 200 OK\r\n"); //HTTP/1.0 응답 헤더 생성 시작
+    sprintf(buf, "%sServer: Tiny Web Server\r\n", buf); //서버 정보 헤더 추가
     sprintf(buf, "%sConnection: close\r\n", buf);
     sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
     sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
 
-    Rio_writen(fd, buf, strlen(buf)); //응답 헤더 클라이언트에 전송
-    printf("Response headers:\n");
-    printf("%s", buf);
+    // 완성된 HTTP 응답 헤더를 클라이언트로 전송
+    Rio_writen(fd, buf, strlen(buf));
 
-    srcfd = Open(filename, O_RDONLY, 0);
-    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
-    Close(srcfd);
-    Rio_writen(fd, srcp, filesize);
-    Munmap(srcp, filesize);
+    srcfd = Open(filename, O_RDONLY, 0); //요청한 정적 파일을 디스크에서 읽기
+    filebuf = (char *)Malloc(filesize); //파일 크기 만큼 메모리 버퍼 할당
+    bytes_read = Rio_readn(srcfd, filebuf, filesize); //디스크 파일 내용을 filebuf로 읽어오기 
+
+    //읽어온 파일 내용을 클라이언트로 전송
+    Rio_writen(fd, filebuf, bytes_read);
+
+    Free(filebuf); //메모리 버퍼 해제
+    Close(srcfd); //디스크 파일 닫기
 }
 
-//파일 이름보고 Content-Type 결정
+//7. get_filetype - 파일 이름보고 Content-Type 결정
 void get_filetype(char *filename, char *filetype)
 {
     if (strstr(filename, ".html"))
@@ -212,7 +242,33 @@ void get_filetype(char *filename, char *filetype)
         strcpy(filetype, "image/png");
     else if (strstr(filename, ".jpg"))
         strcpy(filetype, "image/jpeg");
+    else if (strstr(filename, ".mp4"))
+        strcpy(filetype, "video/mp4");
     else
         strcpy(filetype, "text/plain");
 }
 
+//8. serve_dynamic - 동적컨텐츠(CGI) 실행
+void serve_dynamic(int fd, char *filename, char *cgiargs)
+{
+    char buf[MAXLINE], *emptylist[] = { NULL };
+
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    Rio_writen(fd, buf, strlen(buf)); 
+    sprintf(buf, "Server: Tiny Web Server\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+
+    //fork로 자식프로세스 생성
+    if (Fork() == 0) {
+        setenv("QUERY_STRING", cgiargs, 1); // CGI환경변수 설정
+
+        // 표준 출력을 클라이언트 소켓으로 리디렉션:
+        // CGI 프로그램의 printf 결과가 클라이언트에게 직접 전송되도록 함
+        Dup2(fd, STDOUT_FILENO);
+
+        // CGI 프로그램 실행
+        // environ: 현재 환경 변수 목록
+        Execve(filename, emptylist, environ); 
+    }
+    Wait(NULL); // 부모 프로세스는 자식이 종료되기를 기다림 -> 자식 프로세스가 좀비가 되는 것을 방지
+}
